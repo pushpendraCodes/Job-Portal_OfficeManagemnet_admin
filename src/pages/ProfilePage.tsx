@@ -66,7 +66,13 @@ export default function ProfilePage() {
   if (loading) return <p className="muted">{t("loading")}</p>;
   if (error && !user) return <p className="error">{error}</p>;
 
-  const display = user || authUser;
+  const display: ProfileUser = {
+    id: authUser?.id,
+    email: authUser?.email,
+    status: authUser?.status,
+    accountType: authUser?.accountType,
+    ...user,
+  };
 
   return (
     <div className="dash">
@@ -76,8 +82,8 @@ export default function ProfilePage() {
           <h2 className="display dash-title">{t("myProfile")}</h2>
           <p className="muted">{t("profileSub")}</p>
         </div>
-        <span className={`badge ${display?.status === "active" ? "ok" : "warn"}`}>
-          {display?.status || "—"}
+        <span className={`badge ${display.status === "active" ? "ok" : "warn"}`}>
+          {display.status || "—"}
         </span>
       </div>
 
@@ -86,23 +92,23 @@ export default function ProfilePage() {
       <div className="panel">
         <h3 className="chart-card-title">{t("accountDetails")}</h3>
         <div className="detail-grid" style={{ marginTop: 12 }}>
-          <Detail label={t("email")} value={display?.email} />
-          <Detail label={t("mobile")} value={display?.mobile} />
+          <Detail label={t("email")} value={display.email} />
+          <Detail label={t("mobile")} value={display.mobile} />
           <Detail label={t("accountType")} value={t("adminRole")} />
-          <Detail label={t("status")} value={display?.status} />
+          <Detail label={t("status")} value={display.status} />
           <Detail
             label={t("language")}
             value={
-              display?.preferredLocale === "hi"
+              display.preferredLocale === "hi"
                 ? "हिन्दी"
-                : display?.preferredLocale === "en"
+                : display.preferredLocale === "en"
                   ? "English"
-                  : display?.preferredLocale
+                  : display.preferredLocale
             }
           />
-          <Detail label={t("lastLogin")} value={fmtDate(display?.lastLoginAt)} />
-          <Detail label={t("createdAt")} value={fmtDate(display?.createdAt)} />
-          <Detail label="ID" value={display?._id || display?.id || authUser?.id} />
+          <Detail label={t("lastLogin")} value={fmtDate(display.lastLoginAt)} />
+          <Detail label={t("createdAt")} value={fmtDate(display.createdAt)} />
+          <Detail label="ID" value={display._id || display.id || authUser?.id} />
         </div>
       </div>
     </div>
