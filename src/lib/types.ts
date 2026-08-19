@@ -102,6 +102,7 @@ export interface EmployerDetail {
     category: string;
     transactionDate: string;
     description?: string;
+    employeeId?: string | { fullName?: string; mobile?: string };
   }>;
   sites: Array<{
     _id: string;
@@ -117,7 +118,18 @@ export interface EmployerDetail {
     month: number;
     netAmount: number;
     status: string;
-    employeeId?: string;
+    presentDays?: number;
+    halfDays?: number;
+    absentDays?: number;
+    baseSalary?: number;
+    employeeId?:
+      | string
+      | {
+          _id?: string;
+          fullName?: string;
+          mobile?: string;
+          designation?: string;
+        };
   }>;
 }
 

@@ -264,6 +264,9 @@ h1, h2, h3, .display {
 .muted { color: var(--ink-soft); }
 .error { color: var(--warm); font-size: 0.9rem; }
 .row { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+.filter-row { margin-bottom: 0.85rem; }
+.filter-row .input,
+.filter-row .select { min-width: 10rem; max-width: 16rem; }
 
 .auth-wrap {
   min-height: 100vh; display: grid; place-items: center; padding: 1.25rem;
