@@ -16,6 +16,7 @@ import LeadsPage from "./pages/LeadsPage";
 import CategoriesPage from "./pages/CategoriesPage";
 import ExpenditurePage from "./pages/ExpenditurePage";
 import CmsPage from "./pages/CmsPage";
+import ProfilePage from "./pages/ProfilePage";
 
 export default function App() {
   return (
@@ -25,6 +26,7 @@ export default function App() {
         <Route element={<AuthGate />}>
           <Route path="/app" element={<AppLayout />}>
             <Route index element={<DashboardPage />} />
+            <Route path="profile" element={<ProfilePage />} />
             <Route path="employers" element={<EmployersPage />} />
             <Route path="employers/new" element={<EmployerFormPage />} />
             <Route path="employers/:userId" element={<EmployerDetailPage />} />

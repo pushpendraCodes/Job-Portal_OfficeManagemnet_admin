@@ -15,7 +15,10 @@ type NavGroup = { labelKey: string; items: NavItem[] };
 const groups: NavGroup[] = [
   {
     labelKey: "navGroupOverview",
-    items: [{ to: "/app", end: true, key: "dashboard", icon: "dashboard" }],
+    items: [
+      { to: "/app", end: true, key: "dashboard", icon: "dashboard" },
+      { to: "/app/profile", key: "profile", icon: "user" },
+    ],
   },
   {
     labelKey: "navGroupPeople",
@@ -192,13 +195,17 @@ export function AppLayout() {
       </nav>
 
       <div className="sidebar-footer">
-        <div className="sidebar-user">
+        <NavLink
+          to="/app/profile"
+          className={({ isActive }) => `sidebar-user nav-link${isActive ? " active" : ""}`}
+          style={{ textDecoration: "none", color: "inherit" }}
+        >
           <div className="sidebar-avatar">{(user?.email || "A").slice(0, 1).toUpperCase()}</div>
           <div className="sidebar-user-meta">
             <div className="sidebar-user-name">{t("adminRole")}</div>
             <div className="sidebar-user-email">{user?.email}</div>
           </div>
-        </div>
+        </NavLink>
         <button type="button" className="nav-link logout-link" onClick={() => void onLogout()}>
           <span className="nav-icon">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
