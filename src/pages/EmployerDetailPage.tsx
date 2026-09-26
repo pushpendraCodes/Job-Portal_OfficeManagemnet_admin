@@ -3,14 +3,22 @@ import { Link, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { api, getErrorMessage, type ApiSuccess } from "../lib/api";
 import type { EmployerDetail } from "../lib/types";
-import { StatCard, formatINR } from "../components/charts";
+import {
+  CategoryBarChart,
+  ChartCard,
+  MoneyBarChart,
+  StatCard,
+  TypePieChart,
+  UsersPieChart,
+  formatINR,
+} from "../components/charts";
 import { emptyMeta, metaFromResponse, PAGE_SIZE, Pagination, type PageMeta } from "../components/Pagination";
 
 type Tab = "overview" | "jobs" | "employees" | "tasks" | "attendance" | "expenditure" | "sites" | "salary";
 
 type EmpOption = { _id: string; fullName: string; mobile?: string };
 
-type TaskRow = EmployerDetail["tasks"][number];
+type TaskRow = EmployerDetail["tasks"][number] & { createdAt?: string };
 type AttRow = EmployerDetail["attendance"][number];
 type ExpRow = EmployerDetail["expenditures"][number] & {
   employeeId?: { fullName?: string; mobile?: string } | string;
@@ -31,9 +39,34 @@ type SalRow = EmployerDetail["salaries"][number] & {
 };
 type EmpRow = EmployerDetail["employees"][number];
 
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTH_LIMIT = 200;
+
 function nowMonthValue() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function parseMonth(value: string) {
+  const [y, m] = value.split("-").map(Number);
+  return { year: y || new Date().getFullYear(), month: m || new Date().getMonth() + 1 };
+}
+
+function monthKey(year: number, month: number) {
+  return `${year}-${String(month).padStart(2, "0")}`;
+}
+
+function inSelectedMonth(value: string | undefined, year: number, month: number) {
+  if (!value) return false;
+  return String(value).slice(0, 7) === monthKey(year, month);
+}
+
+function daysInMonth(year: number, month: number) {
+  return new Date(year, month, 0).getDate();
+}
+
+function toDateKey(year: number, month: number, day: number) {
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
 function fmtDate(value?: string) {
@@ -49,6 +82,19 @@ function fmtHours(minutes?: number) {
   if (h === 0) return `${m}m`;
   if (m === 0) return `${h}h`;
   return `${h}h ${m}m`;
+}
+
+function formatTime(value?: string) {
+  if (!value) return "—";
+  return new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function attTone(status?: string) {
+  if (status === "present") return "present";
+  if (status === "half_day") return "half";
+  if (status === "on_leave") return "leave";
+  if (status === "absent") return "absent";
+  return "";
 }
 
 function empName(
@@ -78,6 +124,8 @@ export default function EmployerDetailPage() {
   const [loadingTab, setLoadingTab] = useState(false);
 
   const [empOptions, setEmpOptions] = useState<EmpOption[]>([]);
+  const [monthValue, setMonthValue] = useState(nowMonthValue());
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
 
   const [empQ, setEmpQ] = useState("");
   const [empStatus, setEmpStatus] = useState("all");
@@ -87,35 +135,30 @@ export default function EmployerDetailPage() {
 
   const [taskEmployeeId, setTaskEmployeeId] = useState("all");
   const [taskStatus, setTaskStatus] = useState("all");
-  const [taskDueDate, setTaskDueDate] = useState("");
-  const [taskPage, setTaskPage] = useState(1);
   const [taskMeta, setTaskMeta] = useState<PageMeta>(emptyMeta());
   const [tasks, setTasks] = useState<TaskRow[]>([]);
 
   const [attEmployeeId, setAttEmployeeId] = useState("all");
-  const [attMonth, setAttMonth] = useState(nowMonthValue());
-  const [attDate, setAttDate] = useState("");
-  const [attPage, setAttPage] = useState(1);
-  const [attMeta, setAttMeta] = useState<PageMeta>(emptyMeta());
   const [attendance, setAttendance] = useState<AttRow[]>([]);
 
   const [expEmployeeId, setExpEmployeeId] = useState("all");
-  const [expMonth, setExpMonth] = useState(nowMonthValue());
   const [expType, setExpType] = useState("all");
-  const [expPage, setExpPage] = useState(1);
   const [expMeta, setExpMeta] = useState<PageMeta>(emptyMeta());
   const [expenditures, setExpenditures] = useState<ExpRow[]>([]);
 
   const [salEmployeeId, setSalEmployeeId] = useState("all");
-  const [salMonth, setSalMonth] = useState(nowMonthValue());
-  const [salPage, setSalPage] = useState(1);
   const [salMeta, setSalMeta] = useState<PageMeta>(emptyMeta());
   const [salaries, setSalaries] = useState<SalRow[]>([]);
 
-  const monthParts = useCallback((value: string) => {
-    const [y, m] = value.split("-");
-    return { year: y || "", month: m || "" };
-  }, []);
+  const { year, month } = useMemo(() => parseMonth(monthValue), [monthValue]);
+
+  const monthParams = useCallback(
+    (value = monthValue) => {
+      const parsed = parseMonth(value);
+      return { year: String(parsed.year), month: String(parsed.month) };
+    },
+    [monthValue],
+  );
 
   useEffect(() => {
     if (!userId) return;
@@ -135,10 +178,7 @@ export default function EmployerDetailPage() {
   }, [userId, t]);
 
   const loadEmployees = useCallback(
-    async (
-      page = empPage,
-      overrides?: Partial<{ q: string; status: string }>,
-    ) => {
+    async (page = empPage, overrides?: Partial<{ q: string; status: string }>) => {
       if (!userId) return;
       const q = overrides?.q ?? empQ;
       const status = overrides?.status ?? empStatus;
@@ -169,159 +209,124 @@ export default function EmployerDetailPage() {
 
   const loadTasks = useCallback(
     async (
-      page = taskPage,
-      overrides?: Partial<{ employeeId: string; status: string; dueDate: string }>,
+      page = 1,
+      overrides?: Partial<{ employeeId: string; status: string; month: string }>,
     ) => {
       if (!userId) return;
       const employeeId = overrides?.employeeId ?? taskEmployeeId;
       const status = overrides?.status ?? taskStatus;
-      const dueDate = overrides?.dueDate ?? taskDueDate;
+      const monthVal = overrides?.month ?? monthValue;
       setLoadingTab(true);
       setError("");
       try {
         const params: Record<string, string> = {
           page: String(page),
-          limit: String(PAGE_SIZE),
+          limit: String(MONTH_LIMIT),
+          ...monthParams(monthVal),
         };
         if (employeeId !== "all") params.employeeId = employeeId;
         if (status !== "all") params.status = status;
-        if (dueDate) params.dueDate = dueDate;
         const { data: res } = await api.get<ApiSuccess<TaskRow[]>>(
           `/admin/employers/${userId}/tasks`,
           { params },
         );
         setTasks(res.data);
         setTaskMeta(metaFromResponse(res.meta, res.data.length, page));
-        setTaskPage(page);
       } catch (err) {
         setError(getErrorMessage(err, t("error")));
       } finally {
         setLoadingTab(false);
       }
     },
-    [t, taskDueDate, taskEmployeeId, taskPage, taskStatus, userId],
+    [monthParams, monthValue, t, taskEmployeeId, taskStatus, userId],
   );
 
   const loadAttendance = useCallback(
-    async (
-      page = attPage,
-      overrides?: Partial<{ employeeId: string; month: string; date: string }>,
-    ) => {
+    async (page = 1, overrides?: Partial<{ employeeId: string; month: string }>) => {
       if (!userId) return;
       const employeeId = overrides?.employeeId ?? attEmployeeId;
-      const month = overrides?.month ?? attMonth;
-      const date = overrides?.date ?? attDate;
+      const monthVal = overrides?.month ?? monthValue;
       setLoadingTab(true);
       setError("");
       try {
         const params: Record<string, string> = {
           page: String(page),
-          limit: String(PAGE_SIZE),
+          limit: String(MONTH_LIMIT),
+          ...monthParams(monthVal),
         };
         if (employeeId !== "all") params.employeeId = employeeId;
-        if (date) {
-          params.date = date;
-        } else if (month) {
-          const { year, month: m } = monthParts(month);
-          if (year && m) {
-            params.year = year;
-            params.month = String(Number(m));
-          }
-        }
         const { data: res } = await api.get<ApiSuccess<AttRow[]>>(
           `/admin/employers/${userId}/attendance`,
           { params },
         );
         setAttendance(res.data);
-        setAttMeta(metaFromResponse(res.meta, res.data.length, page));
-        setAttPage(page);
       } catch (err) {
         setError(getErrorMessage(err, t("error")));
       } finally {
         setLoadingTab(false);
       }
     },
-    [attDate, attEmployeeId, attMonth, attPage, monthParts, t, userId],
+    [attEmployeeId, monthParams, monthValue, t, userId],
   );
 
   const loadExpenditures = useCallback(
-    async (
-      page = expPage,
-      overrides?: Partial<{ employeeId: string; month: string; type: string }>,
-    ) => {
+    async (page = 1, overrides?: Partial<{ employeeId: string; month: string; type: string }>) => {
       if (!userId) return;
       const employeeId = overrides?.employeeId ?? expEmployeeId;
-      const month = overrides?.month ?? expMonth;
       const type = overrides?.type ?? expType;
+      const monthVal = overrides?.month ?? monthValue;
       setLoadingTab(true);
       setError("");
       try {
         const params: Record<string, string> = {
           page: String(page),
-          limit: String(PAGE_SIZE),
+          limit: String(MONTH_LIMIT),
+          ...monthParams(monthVal),
         };
         if (employeeId !== "all") params.employeeId = employeeId;
         if (type !== "all") params.type = type;
-        if (month) {
-          const { year, month: m } = monthParts(month);
-          if (year && m) {
-            params.year = year;
-            params.month = String(Number(m));
-          }
-        }
         const { data: res } = await api.get<ApiSuccess<ExpRow[]>>(
           `/admin/employers/${userId}/expenditures`,
           { params },
         );
         setExpenditures(res.data);
         setExpMeta(metaFromResponse(res.meta, res.data.length, page));
-        setExpPage(page);
       } catch (err) {
         setError(getErrorMessage(err, t("error")));
       } finally {
         setLoadingTab(false);
       }
     },
-    [expEmployeeId, expMonth, expPage, expType, monthParts, t, userId],
+    [expEmployeeId, expType, monthParams, monthValue, t, userId],
   );
 
   const loadSalaries = useCallback(
-    async (
-      page = salPage,
-      overrides?: Partial<{ employeeId: string; month: string }>,
-    ) => {
+    async (page = 1, overrides?: Partial<{ employeeId: string; month: string }>) => {
       if (!userId) return;
       const employeeId = overrides?.employeeId ?? salEmployeeId;
-      const month = overrides?.month ?? salMonth;
+      const monthVal = overrides?.month ?? monthValue;
       setLoadingTab(true);
       setError("");
       try {
         const params: Record<string, string> = {
           page: String(page),
-          limit: String(PAGE_SIZE),
+          limit: String(MONTH_LIMIT),
+          ...monthParams(monthVal),
         };
         if (employeeId !== "all") params.employeeId = employeeId;
-        if (month) {
-          const { year, month: m } = monthParts(month);
-          if (year && m) {
-            params.year = year;
-            params.month = String(Number(m));
-          }
-        }
         const { data: res } = await api.get<ApiSuccess<SalRow[]>>(
           `/admin/employers/${userId}/salaries`,
           { params },
         );
         setSalaries(res.data);
         setSalMeta(metaFromResponse(res.meta, res.data.length, page));
-        setSalPage(page);
       } catch (err) {
         setError(getErrorMessage(err, t("error")));
       } finally {
         setLoadingTab(false);
       }
     },
-    [monthParts, salEmployeeId, salMonth, salPage, t, userId],
+    [monthParams, monthValue, salEmployeeId, t, userId],
   );
 
   useEffect(() => {
@@ -332,7 +337,117 @@ export default function EmployerDetailPage() {
     if (tab === "expenditure") void loadExpenditures(1);
     if (tab === "salary") void loadSalaries(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, data, userId]);
+  }, [tab, data, userId, monthValue]);
+
+  const onMonthChange = (value: string) => {
+    const next = value || nowMonthValue();
+    setMonthValue(next);
+    setSelectedDay(null);
+  };
+
+  const monthTasks = useMemo(
+    () =>
+      tasks.filter(
+        (row) => inSelectedMonth(row.dueDate, year, month) || inSelectedMonth(row.createdAt, year, month),
+      ),
+    [month, tasks, year],
+  );
+
+  const monthAttendance = useMemo(
+    () => attendance.filter((row) => inSelectedMonth(row.date, year, month)),
+    [attendance, month, year],
+  );
+
+  const monthExpenditures = useMemo(
+    () => expenditures.filter((row) => inSelectedMonth(row.transactionDate, year, month)),
+    [expenditures, month, year],
+  );
+
+  const monthSalaries = useMemo(
+    () => salaries.filter((row) => row.year === year && row.month === month),
+    [month, salaries, year],
+  );
+
+  const todayKey = useMemo(() => {
+    const d = new Date();
+    return toDateKey(d.getFullYear(), d.getMonth() + 1, d.getDate());
+  }, []);
+
+  const calendarCells = useMemo(() => {
+    const first = new Date(year, month - 1, 1).getDay();
+    const total = daysInMonth(year, month);
+    const cells: Array<{ key: string; day: number | null }> = [];
+    for (let i = 0; i < first; i += 1) cells.push({ key: `e-${i}`, day: null });
+    for (let day = 1; day <= total; day += 1) {
+      cells.push({ key: toDateKey(year, month, day), day });
+    }
+    return cells;
+  }, [month, year]);
+
+  const attendanceByDate = useMemo(() => {
+    const map = new Map<string, AttRow[]>();
+    for (const row of monthAttendance) {
+      const key = String(row.date).slice(0, 10);
+      const list = map.get(key) || [];
+      list.push(row);
+      map.set(key, list);
+    }
+    return map;
+  }, [monthAttendance]);
+
+  const attStats = useMemo(() => {
+    let present = 0;
+    let absent = 0;
+    let half = 0;
+    let minutes = 0;
+    for (const row of monthAttendance) {
+      if (row.status === "present") present += 1;
+      else if (row.status === "half_day") half += 1;
+      else if (row.status === "absent") absent += 1;
+      minutes += Number(row.workedMinutes || 0);
+    }
+    return { present, absent, half, workedHours: fmtHours(minutes) };
+  }, [monthAttendance]);
+
+  const taskChart = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const task of monthTasks) {
+      map.set(task.status, (map.get(task.status) || 0) + 1);
+    }
+    return Array.from(map, ([name, value]) => ({ name, value }));
+  }, [monthTasks]);
+
+  const salaryChart = useMemo(
+    () =>
+      monthSalaries.map((row) => ({
+        label: empName(typeof row.employeeId === "object" ? row.employeeId : null, `${row.month}/${row.year}`),
+        value: Number(row.netAmount || 0),
+      })),
+    [monthSalaries],
+  );
+
+  const monthFinance = useMemo(() => {
+    let credit = 0;
+    let debit = 0;
+    for (const tx of monthExpenditures) {
+      if (tx.type === "credit") credit += Number(tx.amount || 0);
+      else debit += Number(tx.amount || 0);
+    }
+    return { credit, debit, balance: credit - debit };
+  }, [monthExpenditures]);
+
+  const expCategories = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const tx of monthExpenditures) {
+      map.set(tx.category, (map.get(tx.category) || 0) + Number(tx.amount || 0));
+    }
+    return Array.from(map, ([category, total]) => ({ category, total })).sort((a, b) => b.total - a.total);
+  }, [monthExpenditures]);
+
+  const monthLabel = new Date(year, month - 1, 1).toLocaleString(undefined, {
+    month: "long",
+    year: "numeric",
+  });
 
   const employeeSelect = useMemo(
     () => (
@@ -353,16 +468,18 @@ export default function EmployerDetailPage() {
 
   const { user, profile, counts, finance } = data;
   const company = profile?.companyName || t("employers");
+  const selectedRows = selectedDay ? attendanceByDate.get(selectedDay) || [] : [];
+  const monthlyTab = tab === "tasks" || tab === "attendance" || tab === "expenditure" || tab === "salary";
 
   const tabs: Array<{ id: Tab; label: string; count?: number }> = [
     { id: "overview", label: t("overview") },
     { id: "jobs", label: t("jobs"), count: counts.jobs },
     { id: "employees", label: t("employees"), count: counts.employees },
-    { id: "tasks", label: t("tasks"), count: counts.tasks },
-    { id: "attendance", label: t("attendance"), count: counts.attendance },
-    { id: "expenditure", label: t("expenditure"), count: counts.expenditures },
+    { id: "tasks", label: t("tasks"), count: monthTasks.length },
+    { id: "attendance", label: t("attendance"), count: monthAttendance.length },
+    { id: "expenditure", label: t("expenditure"), count: monthExpenditures.length },
     { id: "sites", label: t("sites"), count: counts.sites },
-    { id: "salary", label: t("salary") },
+    { id: "salary", label: t("salary"), count: monthSalaries.length },
   ];
 
   return (
@@ -410,6 +527,24 @@ export default function EmployerDetailPage() {
           </button>
         ))}
       </div>
+
+      {monthlyTab ? (
+        <div className="month-filter">
+          <div className="field" style={{ marginBottom: 0 }}>
+            <label className="label">{t("monthFilter")}</label>
+            <input
+              className="input"
+              type="month"
+              value={monthValue}
+              onChange={(e) => onMonthChange(e.target.value)}
+            />
+          </div>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => onMonthChange(nowMonthValue())}>
+            {t("thisMonth")}
+          </button>
+          {loadingTab ? <span className="muted">{t("loading")}</span> : null}
+        </div>
+      ) : null}
 
       {error ? <p className="error">{error}</p> : null}
 
@@ -511,19 +646,18 @@ export default function EmployerDetailPage() {
                 <th>{t("department")}</th>
                 <th>{t("status")}</th>
                 <th>{t("joiningDate")}</th>
+                <th>{t("actions")}</th>
               </tr>
             </thead>
             <tbody>
               {employees.length === 0 ? (
                 <tr>
-                  <td colSpan={6}>{t("noData")}</td>
+                  <td colSpan={7}>{t("noData")}</td>
                 </tr>
               ) : (
                 employees.map((emp) => (
                   <tr key={emp._id}>
-                    <td>
-                      <Link to={`/app/employees/${emp._id}`}>{emp.fullName}</Link>
-                    </td>
+                    <td>{emp.fullName}</td>
                     <td>{emp.mobile}</td>
                     <td>{emp.designation || "—"}</td>
                     <td>{emp.department || "—"}</td>
@@ -531,6 +665,11 @@ export default function EmployerDetailPage() {
                       <span className={`badge ${emp.status === "active" ? "ok" : "warn"}`}>{emp.status}</span>
                     </td>
                     <td>{fmtDate(emp.joiningDate)}</td>
+                    <td>
+                      <Link to={`/app/employees/${emp._id}`} className="btn btn-ghost">
+                        {t("view")}
+                      </Link>
+                    </td>
                   </tr>
                 ))
               )}
@@ -541,187 +680,265 @@ export default function EmployerDetailPage() {
       )}
 
       {tab === "tasks" && (
-        <div className="panel">
+        <div className="dash">
           <div className="row filter-row">
-            <select className="select" value={taskEmployeeId} onChange={(e) => setTaskEmployeeId(e.target.value)}>
+            <select
+              className="select"
+              value={taskEmployeeId}
+              onChange={(e) => {
+                setTaskEmployeeId(e.target.value);
+                void loadTasks(1, { employeeId: e.target.value });
+              }}
+            >
               {employeeSelect}
             </select>
-            <select className="select" value={taskStatus} onChange={(e) => setTaskStatus(e.target.value)}>
+            <select
+              className="select"
+              value={taskStatus}
+              onChange={(e) => {
+                setTaskStatus(e.target.value);
+                void loadTasks(1, { status: e.target.value });
+              }}
+            >
               <option value="all">{t("allStatuses")}</option>
               <option value="todo">todo</option>
               <option value="in_progress">in_progress</option>
               <option value="done">done</option>
               <option value="cancelled">cancelled</option>
             </select>
-            <input className="input" type="date" value={taskDueDate} onChange={(e) => setTaskDueDate(e.target.value)} />
-            <button type="button" className="btn" disabled={loadingTab} onClick={() => void loadTasks(1)}>
-              {t("filter")}
-            </button>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              onClick={() => {
-                setTaskEmployeeId("all");
-                setTaskStatus("all");
-                setTaskDueDate("");
-                void loadTasks(1, { employeeId: "all", status: "all", dueDate: "" });
-              }}
-            >
-              {t("clearFilters")}
-            </button>
           </div>
-          {loadingTab ? <p className="muted">{t("loading")}</p> : null}
-          <table className="table">
-            <thead>
-              <tr>
-                <th>{t("taskTitle")}</th>
-                <th>{t("status")}</th>
-                <th>{t("priority")}</th>
-                <th>{t("assignees")}</th>
-                <th>{t("dueDate")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tasks.length === 0 ? (
+          <div className="grid-2">
+            <ChartCard title={t("tasksThisMonth")} subtitle={monthLabel}>
+              <UsersPieChart data={taskChart} />
+            </ChartCard>
+            <div className="grid-2">
+              <StatCard label={t("tasks")} value={monthTasks.length} tone="accent" />
+              <StatCard
+                label="done"
+                value={monthTasks.filter((row) => row.status === "done").length}
+                tone="ok"
+              />
+            </div>
+          </div>
+          <div className="panel">
+            <table className="table">
+              <thead>
                 <tr>
-                  <td colSpan={5}>{t("noData")}</td>
+                  <th>{t("taskTitle")}</th>
+                  <th>{t("status")}</th>
+                  <th>{t("priority")}</th>
+                  <th>{t("assignees")}</th>
+                  <th>{t("dueDate")}</th>
                 </tr>
-              ) : (
-                tasks.map((task) => (
-                  <tr key={task._id}>
-                    <td>{task.title}</td>
-                    <td>
-                      <span className="badge">{task.status}</span>
-                    </td>
-                    <td>{task.priority}</td>
-                    <td>
-                      {(task.assignedToEmployeeIds || [])
-                        .map((a) => a.fullName)
-                        .filter(Boolean)
-                        .join(", ") || "—"}
-                    </td>
-                    <td>{fmtDate(task.dueDate)}</td>
+              </thead>
+              <tbody>
+                {monthTasks.length === 0 ? (
+                  <tr>
+                    <td colSpan={5}>{t("noData")}</td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-          <Pagination meta={taskMeta} loading={loadingTab} onPageChange={(p) => void loadTasks(p)} />
+                ) : (
+                  monthTasks.map((task) => (
+                    <tr key={task._id}>
+                      <td>{task.title}</td>
+                      <td>
+                        <span className="badge">{task.status}</span>
+                      </td>
+                      <td>{task.priority}</td>
+                      <td>
+                        {(task.assignedToEmployeeIds || [])
+                          .map((a) => a.fullName)
+                          .filter(Boolean)
+                          .join(", ") || "—"}
+                      </td>
+                      <td>{fmtDate(task.dueDate)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+            <Pagination meta={taskMeta} loading={loadingTab} onPageChange={(p) => void loadTasks(p)} />
+          </div>
         </div>
       )}
 
       {tab === "attendance" && (
-        <div className="panel">
+        <div className="dash">
           <div className="row filter-row">
-            <select className="select" value={attEmployeeId} onChange={(e) => setAttEmployeeId(e.target.value)}>
-              {employeeSelect}
-            </select>
-            <input className="input" type="month" value={attMonth} onChange={(e) => setAttMonth(e.target.value)} />
-            <input className="input" type="date" value={attDate} onChange={(e) => setAttDate(e.target.value)} />
-            <button type="button" className="btn" disabled={loadingTab} onClick={() => void loadAttendance(1)}>
-              {t("filter")}
-            </button>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              onClick={() => {
-                const month = nowMonthValue();
-                setAttEmployeeId("all");
-                setAttMonth(month);
-                setAttDate("");
-                void loadAttendance(1, { employeeId: "all", month, date: "" });
+            <select
+              className="select"
+              value={attEmployeeId}
+              onChange={(e) => {
+                setAttEmployeeId(e.target.value);
+                void loadAttendance(1, { employeeId: e.target.value });
               }}
             >
-              {t("thisMonth")}
-            </button>
+              {employeeSelect}
+            </select>
           </div>
-          {loadingTab ? <p className="muted">{t("loading")}</p> : null}
-          <table className="table">
-            <thead>
-              <tr>
-                <th>{t("date")}</th>
-                <th>{t("name")}</th>
-                <th>{t("status")}</th>
-                <th>{t("loginAt")}</th>
-                <th>{t("logoutAt")}</th>
-                <th>{t("workedHours")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {attendance.length === 0 ? (
-                <tr>
-                  <td colSpan={6}>{t("noData")}</td>
-                </tr>
+          <div className="grid-4">
+            <StatCard label={t("attPresent")} value={attStats.present} tone="ok" />
+            <StatCard label={t("attAbsent")} value={attStats.absent} tone="warn" />
+            <StatCard label={t("halfDay")} value={attStats.half} />
+            <StatCard label={t("workedHours")} value={attStats.workedHours} />
+          </div>
+          <div className="att-layout">
+            <div className="panel">
+              <div className="att-calendar-head">
+                <h3 className="chart-card-title">{monthLabel}</h3>
+                <div className="att-legend">
+                  <span className="att-legend-item present">{t("attPresent")}</span>
+                  <span className="att-legend-item half">{t("halfDay")}</span>
+                  <span className="att-legend-item absent">{t("attAbsent")}</span>
+                  <span className="att-legend-item leave">{t("onLeave")}</span>
+                </div>
+              </div>
+              <div className="att-weekdays">
+                {WEEKDAYS.map((d) => (
+                  <div key={d} className="att-weekday">
+                    {d}
+                  </div>
+                ))}
+              </div>
+              <div className="att-grid">
+                {calendarCells.map((cell) => {
+                  if (!cell.day) return <div key={cell.key} className="att-day empty" />;
+                  const rows = attendanceByDate.get(cell.key) || [];
+                  const status = attTone(rows[0]?.status);
+                  const hours = rows.reduce((sum, row) => sum + Number(row.workedMinutes || 0), 0);
+                  const future = cell.key > todayKey;
+                  return (
+                    <button
+                      key={cell.key}
+                      type="button"
+                      className={`att-day ${status}${selectedDay === cell.key ? " selected" : ""}${
+                        cell.key === todayKey ? " today" : ""
+                      }${future ? " future" : ""}`}
+                      onClick={() => setSelectedDay(cell.key)}
+                    >
+                      <span className="att-day-num">{cell.day}</span>
+                      {hours ? <span className="att-day-hours">{fmtHours(hours)}</span> : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="panel">
+              <h3 className="chart-card-title">{selectedDay ? t("dayDetails") : t("pickADay")}</h3>
+              <p className="muted chart-card-sub">{selectedDay || t("attendanceCalendarHint")}</p>
+              {!selectedDay ? (
+                <p className="muted" style={{ marginTop: 16 }}>
+                  {t("attendanceClickDay")}
+                </p>
+              ) : selectedRows.length === 0 ? (
+                <p className="muted" style={{ marginTop: 16 }}>
+                  {t("noAttendanceOnDay")}
+                </p>
               ) : (
-                attendance.map((row) => (
-                  <tr key={row._id}>
-                    <td>{row.date}</td>
-                    <td>{empName(row.employeeId)}</td>
-                    <td>
-                      <span className={`badge ${row.status === "present" ? "ok" : "warn"}`}>{row.status}</span>
-                    </td>
-                    <td>{row.loginAt ? new Date(row.loginAt).toLocaleString() : "—"}</td>
-                    <td>{row.logoutAt ? new Date(row.logoutAt).toLocaleString() : "—"}</td>
-                    <td>{fmtHours(row.workedMinutes)}</td>
-                  </tr>
-                ))
+                <div className="att-day-list">
+                  {selectedRows.map((row) => (
+                    <article key={row._id} className="att-day-card">
+                      <p className="att-emp-name" style={{ margin: "0 0 8px", fontWeight: 650 }}>
+                        {empName(row.employeeId)}
+                      </p>
+                      <div className="row" style={{ justifyContent: "space-between" }}>
+                        <span className={`badge ${row.status === "present" ? "ok" : "warn"}`}>
+                          {t(`attStatus.${row.status}`, { defaultValue: row.status })}
+                        </span>
+                        <strong>{fmtHours(row.workedMinutes)}</strong>
+                      </div>
+                      <div className="att-time-row">
+                        <div>
+                          <div className="label">{t("loginAt")}</div>
+                          <div>{formatTime(row.loginAt)}</div>
+                        </div>
+                        <div>
+                          <div className="label">{t("logoutAt")}</div>
+                          <div>{formatTime(row.logoutAt)}</div>
+                        </div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
               )}
-            </tbody>
-          </table>
-          <Pagination meta={attMeta} loading={loadingTab} onPageChange={(p) => void loadAttendance(p)} />
+            </div>
+          </div>
         </div>
       )}
 
       {tab === "expenditure" && (
-        <div className="panel">
+        <div className="dash">
           <div className="row filter-row">
-            <select className="select" value={expEmployeeId} onChange={(e) => setExpEmployeeId(e.target.value)}>
+            <select
+              className="select"
+              value={expEmployeeId}
+              onChange={(e) => {
+                setExpEmployeeId(e.target.value);
+                void loadExpenditures(1, { employeeId: e.target.value });
+              }}
+            >
               {employeeSelect}
             </select>
-            <input className="input" type="month" value={expMonth} onChange={(e) => setExpMonth(e.target.value)} />
-            <select className="select" value={expType} onChange={(e) => setExpType(e.target.value)}>
+            <select
+              className="select"
+              value={expType}
+              onChange={(e) => {
+                setExpType(e.target.value);
+                void loadExpenditures(1, { type: e.target.value });
+              }}
+            >
               <option value="all">{t("allTypes")}</option>
               <option value="credit">{t("expCredit")}</option>
               <option value="debit">{t("expDebit")}</option>
             </select>
-            <button type="button" className="btn" disabled={loadingTab} onClick={() => void loadExpenditures(1)}>
-              {t("filter")}
-            </button>
           </div>
-          {loadingTab ? <p className="muted">{t("loading")}</p> : null}
-          <table className="table">
-            <thead>
-              <tr>
-                <th>{t("date")}</th>
-                <th>{t("type")}</th>
-                <th>{t("category")}</th>
-                <th>{t("amount")}</th>
-                <th>{t("name")}</th>
-                <th>{t("description")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {expenditures.length === 0 ? (
+          <div className="grid-3">
+            <StatCard label={t("expCredit")} value={formatINR(monthFinance.credit)} tone="ok" />
+            <StatCard label={t("expDebit")} value={formatINR(monthFinance.debit)} tone="warn" />
+            <StatCard label={t("expBalance")} value={formatINR(monthFinance.balance)} />
+          </div>
+          <div className="grid-2">
+            <ChartCard title={t("expMonthChart")} subtitle={monthLabel}>
+              <TypePieChart credit={monthFinance.credit} debit={monthFinance.debit} />
+            </ChartCard>
+            <ChartCard title={t("expByCategory")} subtitle={monthLabel}>
+              <CategoryBarChart data={expCategories} />
+            </ChartCard>
+          </div>
+          <div className="panel">
+            <table className="table">
+              <thead>
                 <tr>
-                  <td colSpan={6}>{t("noData")}</td>
+                  <th>{t("date")}</th>
+                  <th>{t("type")}</th>
+                  <th>{t("category")}</th>
+                  <th>{t("amount")}</th>
+                  <th>{t("name")}</th>
+                  <th>{t("description")}</th>
                 </tr>
-              ) : (
-                expenditures.map((tx) => (
-                  <tr key={tx._id}>
-                    <td>{fmtDate(tx.transactionDate)}</td>
-                    <td>
-                      <span className={`badge ${tx.type === "credit" ? "ok" : "warn"}`}>{tx.type}</span>
-                    </td>
-                    <td>{tx.category}</td>
-                    <td>{formatINR(Number(tx.amount || 0))}</td>
-                    <td>{empName(typeof tx.employeeId === "object" ? tx.employeeId : null)}</td>
-                    <td>{tx.description || "—"}</td>
+              </thead>
+              <tbody>
+                {monthExpenditures.length === 0 ? (
+                  <tr>
+                    <td colSpan={6}>{t("noData")}</td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-          <Pagination meta={expMeta} loading={loadingTab} onPageChange={(p) => void loadExpenditures(p)} />
+                ) : (
+                  monthExpenditures.map((tx) => (
+                    <tr key={tx._id}>
+                      <td>{fmtDate(tx.transactionDate)}</td>
+                      <td>
+                        <span className={`badge ${tx.type === "credit" ? "ok" : "warn"}`}>{tx.type}</span>
+                      </td>
+                      <td>{tx.category}</td>
+                      <td>{formatINR(Number(tx.amount || 0))}</td>
+                      <td>{empName(typeof tx.employeeId === "object" ? tx.employeeId : null)}</td>
+                      <td>{tx.description || "—"}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+            <Pagination meta={expMeta} loading={loadingTab} onPageChange={(p) => void loadExpenditures(p)} />
+          </div>
         </div>
       )}
 
@@ -763,62 +980,57 @@ export default function EmployerDetailPage() {
       )}
 
       {tab === "salary" && (
-        <div className="panel">
+        <div className="dash">
           <div className="row filter-row">
-            <select className="select" value={salEmployeeId} onChange={(e) => setSalEmployeeId(e.target.value)}>
-              {employeeSelect}
-            </select>
-            <input className="input" type="month" value={salMonth} onChange={(e) => setSalMonth(e.target.value)} />
-            <button type="button" className="btn" disabled={loadingTab} onClick={() => void loadSalaries(1)}>
-              {t("filter")}
-            </button>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              onClick={() => {
-                const month = nowMonthValue();
-                setSalEmployeeId("all");
-                setSalMonth(month);
-                void loadSalaries(1, { employeeId: "all", month });
+            <select
+              className="select"
+              value={salEmployeeId}
+              onChange={(e) => {
+                setSalEmployeeId(e.target.value);
+                void loadSalaries(1, { employeeId: e.target.value });
               }}
             >
-              {t("thisMonth")}
-            </button>
+              {employeeSelect}
+            </select>
           </div>
-          {loadingTab ? <p className="muted">{t("loading")}</p> : null}
-          <table className="table">
-            <thead>
-              <tr>
-                <th>{t("name")}</th>
-                <th>{t("month")}</th>
-                <th>{t("year")}</th>
-                <th>{t("present")}</th>
-                <th>{t("amount")}</th>
-                <th>{t("status")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {salaries.length === 0 ? (
+          <ChartCard title={t("salaryTrend")} subtitle={monthLabel}>
+            <MoneyBarChart data={salaryChart} />
+          </ChartCard>
+          <div className="panel">
+            <table className="table">
+              <thead>
                 <tr>
-                  <td colSpan={6}>{t("noData")}</td>
+                  <th>{t("name")}</th>
+                  <th>{t("month")}</th>
+                  <th>{t("year")}</th>
+                  <th>{t("presentDays")}</th>
+                  <th>{t("amount")}</th>
+                  <th>{t("status")}</th>
                 </tr>
-              ) : (
-                salaries.map((row) => (
-                  <tr key={row._id}>
-                    <td>{empName(typeof row.employeeId === "object" ? row.employeeId : null)}</td>
-                    <td>{row.month}</td>
-                    <td>{row.year}</td>
-                    <td>{row.presentDays ?? "—"}</td>
-                    <td>{formatINR(Number(row.netAmount || 0))}</td>
-                    <td>
-                      <span className="badge">{row.status}</span>
-                    </td>
+              </thead>
+              <tbody>
+                {monthSalaries.length === 0 ? (
+                  <tr>
+                    <td colSpan={6}>{t("noData")}</td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-          <Pagination meta={salMeta} loading={loadingTab} onPageChange={(p) => void loadSalaries(p)} />
+                ) : (
+                  monthSalaries.map((row) => (
+                    <tr key={row._id}>
+                      <td>{empName(typeof row.employeeId === "object" ? row.employeeId : null)}</td>
+                      <td>{row.month}</td>
+                      <td>{row.year}</td>
+                      <td>{row.presentDays ?? "—"}</td>
+                      <td>{formatINR(Number(row.netAmount || 0))}</td>
+                      <td>
+                        <span className="badge">{row.status}</span>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+            <Pagination meta={salMeta} loading={loadingTab} onPageChange={(p) => void loadSalaries(p)} />
+          </div>
         </div>
       )}
     </div>

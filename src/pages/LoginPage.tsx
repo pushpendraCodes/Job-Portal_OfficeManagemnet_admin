@@ -5,6 +5,7 @@ import { api, getErrorMessage, type ApiSuccess } from "../lib/api";
 import type { AdminUser } from "../lib/types";
 import { useAppDispatch } from "../store/hooks";
 import { setCredentials } from "../store/authSlice";
+import { ThemeToggle } from "../components/ThemeToggle";
 
 export default function LoginPage() {
   const { t } = useTranslation();
@@ -39,20 +40,39 @@ export default function LoginPage() {
 
   return (
     <div className="auth-wrap">
+      <ThemeToggle className="auth-theme" />
       <div className="auth-card">
-        <div className="display" style={{ fontSize: "1.8rem" }}>
-          {t("login")}
+        <div className="sidebar-brand">
+          <div className="brand-mark">L</div>
+          <div>
+            <div className="brand-title">{t("brand")}</div>
+            <div className="brand-sub">{t("sidebarAdmin")}</div>
+          </div>
         </div>
-        <p className="muted" style={{ marginTop: 6 }}>Default: admin@textilejobs.local / Admin@1234</p>
-        <div className="field" style={{ marginTop: 16 }}>
-          <label className="label">{t("email")}</label>
-          <input className="input" value={email} onChange={(e) => setEmail(e.target.value)} />
+        <h1 className="auth-title">{t("login")}</h1>
+        <p className="muted auth-hint">{t("loginHint")}</p>
+        <div className="field">
+          <label className="label" htmlFor="admin-email">
+            {t("email")}
+          </label>
+          <input
+            id="admin-email"
+            className="input"
+            type="email"
+            autoComplete="username"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
         </div>
         <div className="field">
-          <label className="label">{t("password")}</label>
+          <label className="label" htmlFor="admin-password">
+            {t("password")}
+          </label>
           <input
+            id="admin-password"
             className="input"
             type="password"
+            autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />
@@ -60,8 +80,7 @@ export default function LoginPage() {
         {error && <p className="error">{error}</p>}
         <button
           type="button"
-          className="btn"
-          style={{ width: "100%" }}
+          className="btn btn-block"
           disabled={loading}
           onClick={() => void submit()}
         >

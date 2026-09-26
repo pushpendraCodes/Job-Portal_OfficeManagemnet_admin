@@ -7,6 +7,7 @@ import { api } from "../lib/api";
 import i18n from "../i18n";
 import { NotificationCenter } from "./NotificationCenter";
 import { PushRegistrar } from "./PushRegistrar";
+import { ThemeToggle } from "./ThemeToggle";
 
 type NavItem = { to: string; end?: boolean; key: string; icon: string };
 
@@ -136,6 +137,28 @@ function NavIcon({ name }: { name: string }) {
   }
 }
 
+const SIDEBAR_HIDDEN_KEY = "loomhire-admin-sidebar-hidden";
+
+function readSidebarHidden() {
+  try {
+    return localStorage.getItem(SIDEBAR_HIDDEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function persistSidebarHidden(hidden: boolean) {
+  try {
+    localStorage.setItem(SIDEBAR_HIDDEN_KEY, hidden ? "1" : "0");
+  } catch {
+    // ignore
+  }
+}
+
+function isMobileNav() {
+  return typeof window !== "undefined" && window.matchMedia("(max-width: 900px)").matches;
+}
+
 export function AppLayout() {
   const { t } = useTranslation();
   const dispatch = useAppDispatch();
@@ -143,10 +166,28 @@ export function AppLayout() {
   const location = useLocation();
   const user = useAppSelector((s) => s.auth.user);
   const [open, setOpen] = useState(false);
+  const [hidden, setHidden] = useState(readSidebarHidden);
 
   useEffect(() => {
     setOpen(false);
   }, [location.pathname]);
+
+  const hideDesktopSidebar = () => {
+    setHidden(true);
+    persistSidebarHidden(true);
+  };
+
+  const toggleSidebar = () => {
+    if (isMobileNav()) {
+      setOpen((v) => !v);
+      return;
+    }
+    setHidden((v) => {
+      const next = !v;
+      persistSidebarHidden(next);
+      return next;
+    });
+  };
 
   const onLogout = async () => {
     try {
@@ -166,11 +207,24 @@ export function AppLayout() {
   const sidebar = (
     <aside className={`sidebar${open ? " open" : ""}`}>
       <div className="sidebar-brand">
-        <div className="brand-mark">LH</div>
-        <div>
+        <div className="brand-mark">L</div>
+        <div className="sidebar-brand-copy">
           <div className="brand-title">{t("brand")}</div>
           <div className="brand-sub">{t("sidebarAdmin")}</div>
         </div>
+        <button
+          type="button"
+          className="sidebar-hide-btn"
+          aria-label={t("hideSidebar")}
+          title={t("hideSidebar")}
+          onClick={hideDesktopSidebar}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+            <rect x="3" y="4" width="18" height="16" rx="2" />
+            <path d="M9 4v16" />
+            <path d="M15 9l-3 3 3 3" />
+          </svg>
+        </button>
       </div>
 
       <nav className="sidebar-nav">
@@ -221,15 +275,21 @@ export function AppLayout() {
   );
 
   return (
-    <div className={`shell${open ? " sidebar-open" : ""}`}>
+    <div className={`shell${open ? " sidebar-open" : ""}${hidden ? " sidebar-hidden" : ""}`}>
       <PushRegistrar />
       {open && <button type="button" className="sidebar-backdrop" aria-label="Close menu" onClick={() => setOpen(false)} />}
       {sidebar}
       <div className="content">
         <div className="topbar">
           <div className="topbar-left">
-            <button type="button" className="menu-btn" aria-label="Open menu" onClick={() => setOpen(true)}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <button
+              type="button"
+              className="menu-btn"
+              aria-label={hidden ? t("showSidebar") : t("hideSidebar")}
+              title={hidden ? t("showSidebar") : t("hideSidebar")}
+              onClick={toggleSidebar}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
                 <line x1="3" y1="6" x2="21" y2="6" />
                 <line x1="3" y1="12" x2="21" y2="12" />
                 <line x1="3" y1="18" x2="21" y2="18" />
@@ -241,6 +301,7 @@ export function AppLayout() {
             </div>
           </div>
           <div className="row">
+            <ThemeToggle />
             <NotificationCenter />
             <div className="lang-switch">
               <button
